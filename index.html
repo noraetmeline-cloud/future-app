@@ -727,6 +727,7 @@ let tileOrder=[],tileShape='rect';
 let weatherCity=localStorage.getItem('weatherCity')||'';
 let weatherData=null;
 let iconCatFilter='all',selActiveDays=[1,2,3,4,5];
+let appReady=false; // verrou anti-chargement infini
 
 const TODAY=()=>new Date().toISOString().split('T')[0];
 const DOW=()=>new Date().getDay(); // 0=Sun
@@ -762,7 +763,7 @@ async function doRegister(){
   else showAuthSuccess('Compte créé ! Connecte-toi maintenant.');
 }
 async function doLogout(){
-  await sb.auth.signOut();currentUser=null;habits=[];logs=[];notes=[];sleepData=[];reminders=[];moods=[];tileOrder=[];
+  await sb.auth.signOut();appReady=false;currentUser=null;habits=[];logs=[];notes=[];sleepData=[];reminders=[];moods=[];tileOrder=[];
   document.getElementById('app').classList.remove('visible');
   document.getElementById('auth-screen').style.display='flex';
 }
@@ -786,6 +787,27 @@ async function loadAllData(){
 }
 
 // ─── BOOT ───
+async function startApp(user){
+  if(appReady)return; // verrou : on ne charge qu'une seule fois
+  appReady=true;
+  currentUser=user;
+  document.getElementById('auth-screen').style.display='none';
+  document.getElementById('loading-screen').style.display='flex';
+
+  // Timeout de sécurité : si ça bloque plus de 10s, on force l'affichage
+  const safetyTimer=setTimeout(()=>{
+    document.getElementById('loading-screen').style.display='none';
+    document.getElementById('app').classList.add('visible');
+    initApp();
+  },10000);
+
+  try{await loadAllData();}catch(e){console.error('Erreur chargement:',e);}
+  clearTimeout(safetyTimer);
+  document.getElementById('loading-screen').style.display='none';
+  document.getElementById('app').classList.add('visible');
+  initApp();
+}
+
 document.addEventListener('DOMContentLoaded',async()=>{
   Chart.defaults.font.family="'DM Mono',monospace";Chart.defaults.color='#5a5868';
   buildColorGrids();buildThemePicker();buildIconPicker();
@@ -794,23 +816,26 @@ document.addEventListener('DOMContentLoaded',async()=>{
   document.querySelectorAll('#day-selector .day-sel-btn').forEach(b=>b.addEventListener('click',()=>{b.classList.toggle('active');selActiveDays=[...document.querySelectorAll('#day-selector .day-sel-btn.active')].map(x=>+x.dataset.d);}));
   document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
+  // Vérification de session au démarrage (une seule fois)
+  const{data:{session}}=await sb.auth.getSession();
+  if(session?.user){
+    await startApp(session.user);
+  } else {
+    document.getElementById('loading-screen').style.display='none';
+    document.getElementById('auth-screen').style.display='flex';
+  }
+
+  // Écoute uniquement les nouvelles connexions et déconnexions
   sb.auth.onAuthStateChange(async(event,session)=>{
-    if(session?.user){
-      currentUser=session.user;
-      document.getElementById('auth-screen').style.display='none';
-      document.getElementById('loading-screen').style.display='flex';
-      await loadAllData();
-      document.getElementById('loading-screen').style.display='none';
-      document.getElementById('app').classList.add('visible');
-      initApp();
-    } else {
-      document.getElementById('loading-screen').style.display='none';
-      document.getElementById('auth-screen').style.display='flex';
+    if(event==='SIGNED_IN'&&session?.user&&!appReady){
+      await startApp(session.user);
+    }
+    if(event==='SIGNED_OUT'){
+      appReady=false;currentUser=null;habits=[];logs=[];notes=[];sleepData=[];reminders=[];moods=[];tileOrder=[];
       document.getElementById('app').classList.remove('visible');
+      document.getElementById('auth-screen').style.display='flex';
     }
   });
-  const{data:{session}}=await sb.auth.getSession();
-  if(!session){document.getElementById('loading-screen').style.display='none';document.getElementById('auth-screen').style.display='flex';}
 });
 
 function initApp(){
